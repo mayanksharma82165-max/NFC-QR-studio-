@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Universal NFC & QR Card Studio</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 16px;
+      margin: 0;
+    }
+    .box {
+      max-width: 420px;
+      margin: 0 auto 20px;
+      background: #1e293b;
+      padding: 18px;
+      border-radius: 16px;
+      border: 1px solid #334155;
+    }
+    h2 { font-size: 18px; margin: 0 0 14px; color: #f59e0b; }
+    label { font-size: 12px; color: #94a3b8; display: block; margin-bottom: 5px; font-weight: 600; }
+    input {
+      width: 100%;
+      padding: 12px;
+      margin-bottom: 14px;
+      border-radius: 10px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: #fff;
+      font-size: 14px;
+    }
+    input:focus {
+      outline: none;
+      border-color: #f59e0b;
+    }
+    button {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 12px;
+      font-size: 14.5px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+    .btn-qr { background: #f59e0b; color: #0f172a; }
+    .btn-nfc { background: #10b981; color: #ffffff; }
+    .btn-print { background: #3b82f6; color: #ffffff; }
+
+    #status {
+      font-size: 13px;
+      padding: 12px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      margin-top: 6px;
+      word-break: break-all;
+      line-height: 1.4;
+    }
+    .status-error { color: #fca5a5; border-color: #ef4444 !important; }
+    .status-ok { color: #6ee7b7; border-color: #10b981 !important; }
+
+    /* Exact Physical Print Dimensions (4.2cm x 4.5cm) */
+    .sticker-wrap {
+      box-sizing: border-box;
+      background: #ffffff;
+      color: #000000;
+      width: 4.2cm;
+      height: 4.5cm;
+      margin: 20px auto;
+      padding: 0.2cm;
+      border-radius: 0.2cm;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      border: 1px dashed #94a3b8;
+    }
+    .st-title {
+      font-size: 8.5pt;
+      font-weight: 800;
+      text-transform: uppercase;
+      line-height: 1.1;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .st-sub {
+      font-size: 7pt;
+      font-weight: 700;
+      color: #111111;
+    }
+    #qrcode {
+      width: 3.1cm;
+      height: 3.1cm;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #qrcode img, #qrcode canvas {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: contain;
+    }
+
+    @media print {
+      body { background: #ffffff; padding: 0; }
+      .no-print { display: none !important; }
+      .sticker-wrap {
+        border: 0.5pt solid #cccccc;
+        margin: 0.5cm;
+        page-break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="box no-print">
+    <h2>⚡ Universal NFC & QR Card Studio</h2>
+
+    <label for="shopName">Shop Name (Printed on Sticker)</label>
+    <input type="text" id="shopName" placeholder="e.g. Apex Fitness Studio">
+
+    <label for="targetUrl">Live Client Page URL (Must start with https://)</label>
+    <input type="url" id="targetUrl" placeholder="https://apex-gym.vercel.app">
+
+    <button class="btn-qr" onclick="generateQR()">🔄 Generate QR Sticker</button>
+    <button class="btn-nfc" onclick="writeViaWebNFC()">📲 Write URL to NFC Card (Chrome Android)</button>
+    <button class="btn-print" onclick="window.print()">🖨️ Save PDF / Print 4.2cm Sticker</button>
+
+    <div id="status">Paste a live https:// client URL above to begin.</div>
+  </div>
+
+  <!-- Exact 4.2cm x 4.5cm Back-of-Card Sticker -->
+  <div class="sticker-wrap" id="stickerCard">
+    <div class="st-title" id="stName">YOUR SHOP NAME</div>
+    <div id="qrcode"></div>
+    <div class="st-sub">📱 SCAN CAMERA TO REVIEW</div>
+  </div>
+
+  <script>
+    const qrContainer = document.getElementById("qrcode");
+    const statusEl = document.getElementById("status");
+    const stNameEl = document.getElementById("stName");
+    let qrObj = null;
+
+    function setStatus(message, type = "") {
+      statusEl.textContent = message;
+      statusEl.className = "";
+      if (type === "error") statusEl.classList.add("status-error");
+      if (type === "ok") statusEl.classList.add("status-ok");
+    }
+
+    function getValidatedUrl() {
+      const raw = document.getElementById("targetUrl").value.trim();
+      if (!raw) {
+        setStatus("❌ Please paste a client URL first.", "error");
+        return null;
+      }
+      try {
+        const parsed = new URL(raw);
+        if (parsed.protocol !== "https:") {
+          setStatus("❌ URL must start with https:// for NFC & security.", "error");
+          return null;
+        }
+        return parsed.href;
+      } catch (e) {
+        setStatus("❌ Invalid URL format. Example: https://myshop.vercel.app", "error");
+        return null;
+      }
+    }
+
+    function generateQR() {
+      const validUrl = getValidatedUrl();
+      if (!validUrl) return;
+
+      const name = document.getElementById("shopName").value.trim() || "SCAN TO REVIEW";
+      stNameEl.textContent = name.toUpperCase();
+
+      qrContainer.textContent = "";
+      qrObj = new QRCode(qrContainer, {
+        text: validUrl,
+        width: 256,
+        height: 256,
+        correctLevel: QRCode.CorrectLevel.H
+      });
+
+      setStatus("✅ QR Ready for: " + validUrl, "ok");
+    }
+
+    async function writeViaWebNFC() {
+      const validUrl = getValidatedUrl();
+      if (!validUrl) return;
+
+      if (!("NDEFReader" in window)) {
+        setStatus("❌ Web NFC is not supported on this phone/browser. Open this page in Chrome on an NFC Android phone.", "error");
+        return;
+      }
+
+      try {
+        const ndef = new NDEFReader();
+        setStatus("⏳ HOLD NFC CARD TO THE BACK OF THE PHONE NOW...");
+        await ndef.write({
+          records: [{ recordType: "url", data: validUrl }]
+        });
+        setStatus("✅ SUCCESS! Written to NFC Card: " + validUrl, "ok");
+      } catch (err) {
+        setStatus("⚠️ NFC Write Failed: " + err.message, "error");
+      }
+    }
+  </script>
+</body>
+</html>
